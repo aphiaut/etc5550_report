@@ -1,0 +1,337 @@
+---
+title: "Retail Forecasting Project"
+author: "Aphiaut Imuan"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Library
+```{r, message=FALSE, warning=FALSE}
+library(fpp3)
+```
+
+```{r}
+# Use your student ID as the seed
+set.seed(32735804)
+myseries <- aus_retail |>
+  # Remove discontinued series
+  filter(!(`Series ID` %in% c("A3349561R","A3349883F","A3349499L","A3349902A",
+                        "A3349588R","A3349763L","A3349372C","A3349450X",
+                        "A3349679W","A3349378T","A3349767W","A3349451A"))) |>
+  # Select a series at random
+  filter(`Series ID` == sample(`Series ID`,1))
+```
+
+# The Data
+
+This data is Queensland's other retailing n.e.c. turnover in $million AUD from April 1982 to July 2018.
+
+```{r}
+myseries |> autoplot(Turnover) 
+```
+
+This autoplot illustrates the overall retail turnover from April 1982 to July 2018. This graph shows the dramatically increasing trend while it fluctuates. This graph illustrates the seasonality trend and cycle, moreover, it has one peak point every year. 
+
+```{r}
+myseries |> gg_season(Turnover, labels = "both")
+```
+
+After examining the overall original data, we are going to focus on the retail turnover on yearly. This graph shows the retail turnover is at the peak point every December moreover the value of retail turnover is increasing over time. 
+
+
+
+
+# Train data and Test data
+
+In this part, I will divide the data into 2 groups. The first group is train dataset by using the first data until data before January 2017. The second group is test dataset using data from January 2017 to December 2018.
+
+```{r}
+myseries_train <- myseries |> 
+  filter(Month < yearmonth("2017 Jan"))
+
+myseries_test <- myseries |> filter(Month >= yearmonth("2017 Jan"))
+```
+
+
+## Checking data
+
+
+Then I check the data by an STL decomposition because it can show the easy trend and seasonality.
+
+```{r}
+myseries_train |>
+  model(STL(Turnover)) |>
+  components() |>
+  autoplot()
+```
+
+From an STL decomposition plot, this train dataset has a trend and seasonal in dataset. 
+
+
+# Forecasting
+
+This part will divide into 2 models including the ETS model and the ARIMA model
+
+## ETS model
+
+```{r}
+fit_ets <- myseries_train |>
+  model(
+    AAN = ETS(Turnover ~ error("A") + trend("A") + season("N")),
+    Damped = ETS(Turnover ~ error("A") + trend("Ad") + season("N")),
+    Multiplicative = ETS(Turnover ~ error("M") + trend("A") + season("M")),
+    Auto = ETS(Turnover)
+  )
+
+fit_ets |> 
+  glance() |>
+  arrange(AICc)
+```
+
+
+In the ETS model, I decide to use 4 methods including Holt's linear trend method, Damped trend method, Holt-Winters’ multiplicative method, and auto method.
+
+- Holt's linear trend method because this method involves a trend that is related to this data which has a trend.
+
+- Damped trend method because Holt’s linear method displays a constant trend which is the drawback of that model. Moreover, Damped trend method has a parameter that dampens the trend to a flat line sometime in the future.
+
+- Holt-Winters’ multiplicative method because this method is suitable for seasonal variations which are changing proportionally to the level of the series. Furthermore, this data has seasonality and it doesn't constant variants.
+
+- Auto method because R will compute the best method for this data.
+
+In this result, the Multiplicative method and the Auto method are the same. Moreover, it is the best predict model because it has the lowest AIC value.
+
+
+## ARIMA model
+
+ARIMA model requires stationary, so this data need to check and transform it until this data is stationary.
+
+```{r}
+myseries_train |> 
+  gg_tsdisplay(Turnover, plot_type = "partial")
+```
+
+Since this data is not stationary, it needs to transform. Before transformation, it needs to check the lambda for choosing the appropriate transformation method. If the lambda is 0, the suitable transformation method is a logarithm transformation. On the contrary, if lambda is not 0, a Box-Cox transformation is the suitable transformation method.
+
+
+
+```{r}
+myseries_train |>
+  features(Turnover, features = guerrero) |>
+  pull(lambda_guerrero)
+```
+
+I used guerrero feature to estimate the appropriate lambda for this dataset. The appropriate lambda is 0.1719942. Moreover, this lambda is not 0, so this dataset needs to use a Box-Cox transformation.
+
+
+
+
+### 1. Transform data to make Var() stable
+```{r}
+myseries_train |> 
+  gg_tsdisplay(
+    box_cox(Turnover, lambda = 0.1719942), plot_type = "partial")
+```
+
+In this plot, this data has trends and seasonal. So it needs to do the second step for stationary data
+
+### 2. Seasonal difference
+```{r, warning=FALSE}
+myseries_train |> 
+  gg_tsdisplay(
+    difference(box_cox(Turnover, lambda = 0.1719942), lag = 12),
+    plot_type = "partial")   
+```
+
+This graph looks pretty good because it does not have a trend. Maybe it is stationary, so it should check stationary by the unit root test.
+
+```{r}
+# unit root test (check 2 first)
+myseries |> 
+  features(
+    difference(box_cox(Turnover, lambda = 0.1719942), lag = 12),
+    unitroot_kpss)   
+```
+This result shows that kpss_pvalue is 0.05 which means this data is not stationary. So it can use first-order difference to data then check it by the unit-root test.
+
+### 3. First order difference
+```{r, warning=FALSE}
+myseries_train |> 
+  gg_tsdisplay(
+    difference(difference(box_cox(Turnover, lambda = 0.1719942), lag = 12)),
+    plot_type = "partial")   
+```
+
+```{r}
+myseries |> 
+  features(
+    difference(difference(box_cox(Turnover, lambda = 0.1719942), lag = 12)),
+    list(unitroot_kpss, unitroot_ndiffs, 
+         unitroot_nsdiffs))  
+```
+This plot looks good because it doesn't have a trend and seasonal. It doesn't have trends and seasonal. Moreover, the kpss_value is 0.1 which means the differences in data appear stationary. 
+
+Therefore, this transformation can use the ACF and PACF to determine possible candidate models.
+
+### Candidate models 
+
+From PACF
+
+- The last significant spike at lag 2 in the PACF suggests a non-seasonal AR(2) component. The significant spike at lag 12 in the PACF suggests a seasonal AR(1) component. So the first model is SARIMA(2,1,0)(1,1,0)[12]
+
+From ACF
+
+- The last significant spike at and lag 1 in the PACF suggests a non-seasonal MA(1) component. The significant spike at lag 12 in the PACF suggests a seasonal MA(1) component. So the second model is SARIMA(0,1,1)(0,1,1)[12]
+
+Other model 
+
+- The third model is the mixed model by AR and MA, so the third model is SARIMA(2,1,1)(1,1,1)[12]
+
+- The last model is auto model by using R (stepwise = FALSE, approximation = FALSE) to find the appropriate model.
+
+Moreover, constant is 0 in candidate model because mean of this data is 0 and we want the long-term forecasts will follow a straight line.
+
+```{r, warning=FALSE}
+fit_arima <- myseries_train |>
+  model(
+    auto = ARIMA(box_cox(Turnover, lambda = 0.1719942) ~ pdq(d = 1) + PDQ(D = 1), 
+                 stepwise = FALSE, approximation = FALSE),
+    arima_210110 = ARIMA(box_cox(Turnover, lambda = 0.1719942) ~ 0 + pdq(2,1,0) +
+                            PDQ(1,1,0)),
+    arima_011011 = ARIMA(box_cox(Turnover, lambda = 0.1719942) ~ 0 + pdq(0,1,1) +
+                            PDQ(0,1,1)),
+    arima_211111 = ARIMA(box_cox(Turnover, lambda = 0.1719942) ~ 0 + pdq(2,1,1) +
+                            PDQ(1,1,1))
+  )
+```
+
+```{r}
+fit_arima
+
+fit_arima |> glance() |>
+  arrange(AICc)
+
+```
+
+From this result auto model is the best model because the AIC value and AICc value are the lowest value.
+
+
+## Comparing ETS model and ARIMA model
+
+The best ETS model, which is the lowest AIC value, is Multiplicative. While the best ARIMA model, which is the lowest AIC value, is auto model (ARIMA(3,1,1)(1,1,1)[12])
+
+
+```{r,  warning=FALSE}
+best <- myseries_train |>
+  model(
+    ARIMA = ARIMA(box_cox(Turnover, lambda = 0.1719942) ~ pdq(d = 1) + PDQ(D = 1),  stepwise = FALSE, approximation = FALSE),
+    ETS = ETS(Turnover ~ error("M") + trend("A") + season("M"))
+    ) 
+```
+
+### Check accuray by test dataset
+
+Since the test dataset has 2017 and 2018, so I will forecast it by 2 years to check the accuracy of both models.
+ 
+```{r}
+fc <- best |> forecast(h = "2 years")
+autoplot(fc, data = myseries_test)
+
+
+fc |> accuracy(myseries_test) |>
+  arrange(RMSE)
+
+
+```
+
+This plot shows the value prediction of the ETS model is closer to the actual value than the ARIMA model. Moreover, the RMSE of the ETS model is less than ARIMA so it can conclude that the ETS model is better than the ARIMA model for prediction.
+
+## Diagnostic the models
+
+### Diagnostic ETS
+
+```{r}
+best |> select(ETS) |>
+  feasts::gg_tsresiduals()
+
+best |> select(ETS) |> augment() |> features(.innov, ljung_box, lag=10)
+```
+
+
+ACF graph shows the ETS model has white noise between lag 5 and lag 11 because the AFC value is lower than confidence intervals which means it does not have a pattern or trend in these time periods. Moreover, the Ljung-box test tells the P-value is 0.02 which means it is significant autocorrelation in the residual therefore it does not have white noise in the ETS model. It means the ETS model does well in capturing all the dynamics in the data as the residuals do not seem to be white noise.
+
+
+### Diagnostic ARIMA
+
+```{r}
+best |> select(ARIMA) |>
+  feasts::gg_tsresiduals()
+
+best |> select(ARIMA) |> augment() |> features(.innov, ljung_box, lag=10)
+```
+
+ACF graph shows this model has white noise between lag 1 and lag 17 because the AFC value is lower than confidence intervals which means it does not have a pattern or trend in these time periods. Ljung-box test, the P-value is 0.98 which means it is not significant autocorrelation in the residual therefore it has white noise in the ARIMA model. It means the ARIMA model does well in capturing all the dynamics in the data.
+
+
+
+## Using the models with the original data for forcasting 2019 and 2020
+
+
+```{r,  warning=FALSE}
+best_full <- myseries |>
+  model(
+    ARIMA = ARIMA(box_cox(Turnover, lambda = 0.1719942) ~ pdq(d = 1) + PDQ(D = 1),  stepwise = FALSE, approximation = FALSE),
+    ETS = ETS(Turnover ~ error("M") + trend("A") + season("M"))
+    )  
+
+```
+
+```{r}
+fc_full <- best_full |> forecast(h = "2 years")
+autoplot(fc_full, data = myseries, level = 80)
+```
+
+This graph illustrates models predict the retail turnover will be an increasing trend, however, it still has seasonal like the past data.
+
+### Check accuray by the real data from ABS website
+
+```{r}
+updated_data <- readxl::read_excel("data/8501011.xls", sheet = "Data1", skip = 9) |>
+  select(Month = "Series ID", Turnover = myseries$"Series ID"[1]) |>
+  mutate(
+    Month = yearmonth(Month),
+    State = myseries$State[1],
+    Industry = myseries$Industry[1]
+  ) |>
+  as_tsibble(index = Month, key = c(State, Industry))
+```
+
+```{r}
+updated_data_test <- updated_data |>
+  filter(Month >= yearmonth("2019 Jan"))
+```
+
+```{r}
+fc_full |> accuracy(updated_data_test) |>
+  arrange(RMSE)
+```
+
+This result shows the ETS model is the best prediction model compared with the ARIMA model because the RMSE of the ETS model is less than the RMSE of the ARIMA model.
+
+```{r}
+autoplot(fc_full, data = updated_data_test, level = 80)
+```
+
+This plot illustrates a comparison between actual and predicted values from both the ETS and ARIMA models. First-year prediction values closely match the actual values in both models. Especially, the ETS model looks like higher accuracy than the ARIMA model. However, the prediction values of the second year are so far from the actual values.
+
+# Conclusion
+
+The purpose is to generate the appropriate ETS model and ARIMA model to forecast Queensland's other retailing n.e.c. turnover in 2019 and 2020. The model that we got included the Multiplicative method of the ETS model and ARIMA(3,1,1)(1,1,1)[12] of ARIMA model. We use data from 1982 to 2016 to generate the model and test it with Queensland's other retailing n.e.c. turnover in 2017 and 2018. As the prediction results are satisfied, we create a new model with the full data from 1982 to 2018 based on the previous models to forecast Queensland's other retailing n.e.c. turnover in 2019 and 2020. The benefits of these models are that they can predict a year after the end of data quite accurately, and the prediction results of ARIMA are quite reliable because they can capture all the dynamics in the data. The model's limitation is the ETS model has autocorrelated residuals, which indicates the model can't capture all the dynamic data for the prediction. Moreover, these models are based on the trained data, which can affect the choosing method of the ETS model and ARIMA model. Additionally, these models are not suitable for forecasting data that are affected by an unpredictable situation such as COVID-19. 
+
+
+
