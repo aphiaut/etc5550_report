@@ -32,13 +32,16 @@ myseries <- aus_retail |>
 This data is Queensland's other retailing n.e.c. turnover in $million AUD from April 1982 to July 2018.
 
 ```{r}
-myseries |> autoplot(Turnover) 
+myseries |> autoplot(Turnover) +
+  ggplot2::ggtitle("Queensland's other retailing n.e.c. turnover") 
 ```
 
 This autoplot illustrates the overall retail turnover from April 1982 to July 2018. This graph shows the dramatically increasing trend while it fluctuates. This graph illustrates the seasonality trend and cycle, moreover, it has one peak point every year. 
 
 ```{r}
-myseries |> gg_season(Turnover, labels = "both")
+myseries |> gg_season(Turnover, labels = "both") +
+  ggplot2::ggtitle("Queensland's other retailing n.e.c. turnover in each year")
+  
 ```
 
 After examining the overall original data, we are going to focus on the retail turnover on yearly. This graph shows the retail turnover is at the peak point every December moreover the value of retail turnover is increasing over time. 
@@ -109,14 +112,14 @@ In this result, the Multiplicative method and the Auto method are the same. More
 
 ## ARIMA model
 
-ARIMA model requires stationary, so this data need to check and transform it until this data is stationary.
+ARIMA model requires stationary, so this data need to check and transform it until this variance of data is stationary.
 
 ```{r}
 myseries_train |> 
   gg_tsdisplay(Turnover, plot_type = "partial")
 ```
 
-Since this data is not stationary, it needs to transform. Before transformation, it needs to check the lambda for choosing the appropriate transformation method. If the lambda is 0, the suitable transformation method is a logarithm transformation. On the contrary, if lambda is not 0, a Box-Cox transformation is the suitable transformation method.
+Since this variance is not stationary, it needs to transform. Before transformation, it needs to check the lambda for choosing the appropriate transformation method. If the lambda is 0, the suitable transformation method is a logarithm transformation. On the contrary, if lambda is not 0, a Box-Cox transformation is the suitable transformation method.
 
 
 
@@ -138,7 +141,7 @@ myseries_train |>
     box_cox(Turnover, lambda = 0.1719942), plot_type = "partial")
 ```
 
-In this plot, this data has trends and seasonal. So it needs to do the second step for stationary data
+In this plot, this data has trends and seasonal. So it needs to do the second step for stationary.
 
 ### 2. Seasonal difference
 ```{r, warning=FALSE}
@@ -157,6 +160,7 @@ myseries |>
     difference(box_cox(Turnover, lambda = 0.1719942), lag = 12),
     unitroot_kpss)   
 ```
+
 This result shows that kpss_pvalue is 0.05 which means this data is not stationary. So it can use first-order difference to data then check it by the unit-root test.
 
 ### 3. First order difference
@@ -174,6 +178,7 @@ myseries |>
     list(unitroot_kpss, unitroot_ndiffs, 
          unitroot_nsdiffs))  
 ```
+
 This plot looks good because it doesn't have a trend and seasonal. It doesn't have trends and seasonal. Moreover, the kpss_value is 0.1 which means the differences in data appear stationary. 
 
 Therefore, this transformation can use the ACF and PACF to determine possible candidate models.
@@ -240,7 +245,8 @@ Since the test dataset has 2017 and 2018, so I will forecast it by 2 years to ch
  
 ```{r}
 fc <- best |> forecast(h = "2 years")
-autoplot(fc, data = myseries_test)
+autoplot(fc, data = myseries_test) +
+  ggplot2::ggtitle("Queensland's other retailing n.e.c. turnover forecasing 2 years")
 
 
 fc |> accuracy(myseries_test) |>
